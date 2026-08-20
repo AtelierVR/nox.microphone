@@ -3,7 +3,7 @@ using Nox.Audio;
 using Nox.CCK.Events;
 using Nox.CCK.Mods.Cores;
 using Nox.CCK.Mods.Events;
-using Nox.CCK.Utils;
+using UnityEngine.Audio;
 
 namespace Nox.CCK.Audio {
 	/// <summary>
@@ -22,6 +22,25 @@ namespace Nox.CCK.Audio {
 		private readonly IModCoreAPI _coreAPI;
 		private EventSubscription[] _subscriptions = Array.Empty<EventSubscription>();
 
+		/// <summary>
+		/// The voice <see cref="AudioMixer"/> asset (loaded from <c>audio:mixer.mixer</c>).
+		/// Exposes 256 tracks named "00".."FF" under the Master group.
+		/// </summary>
+		public AudioMixer Mixer { get; private set; }
+
+		/// <summary>
+		/// The Master <see cref="AudioMixerGroup"/> of the mixer. Assign this to an
+		/// <see cref="AudioSource.outputAudioMixerGroup"/> to route audio through the mixer.
+		/// </summary>
+		public AudioMixerGroup MixerGroup {
+			get {
+				if (Mixer == null)
+					return null;
+				var groups = Mixer.FindMatchingGroups("Master");
+				return groups.Length > 0 ? groups[0] : null;
+			}
+		}
+
 		public ChannelRegister(string id, string[] depends, IModCoreAPI coreAPI) {
 			_id      = id;
 			_coreAPI = coreAPI;
@@ -34,11 +53,25 @@ namespace Nox.CCK.Audio {
 				throw new InvalidOperationException($"ChannelRegister: Audio API not available, cannot register channel '{id}'.");
 
             Channel = api.Register(id, depends);
+
+			// Load the voice mixer asset (256 tracks "00".."FF").
+			Mixer = coreAPI.AssetAPI.GetAsset<AudioMixer>("audio:mixer.mixer");
+
 			_subscriptions = new[] {
 				coreAPI.EventAPI.Subscribe("audio.channel.remove_requested", OnRemoveRequested),
 				coreAPI.EventAPI.Subscribe("audio.channel.volume_changed", OnVolumeChanged),
 				coreAPI.EventAPI.Subscribe("audio.channel.mute_changed", OnMuteChanged)
 			};
+		}
+
+		/// <summary>
+		/// Get the <see cref="AudioMixerGroup"/> for a track index (0..255, i.e. "00".."FF").
+		/// Returns null if the mixer is unavailable or the index is out of range.
+		/// </summary>
+		public AudioMixerGroup GetTrack(int index) {
+			if (Mixer == null || index < 0 || index > 255)
+				return null;
+			return Mixer.FindMatchingGroups($"{index:X2}")[0];
 		}
 
 
