@@ -89,6 +89,22 @@ def main() -> None:
         f.write("%YAML 1.1\n")
         f.write("%TAG !u! tag:unity3d.com,2011:\n")
 
+        # Pre-allocate a volume param GUID per track so we can expose it.
+        track_volume_guids = [guid() for _ in range(TRACK_COUNT)]
+        exposed_params = []
+        for i in range(TRACK_COUNT):
+            exposed_params.append(
+                f"  - guid: {track_volume_guids[i]}\n"
+                f"    name: Volume_{i:02X}\n"
+                f"    guidParam: {track_volume_guids[i]}\n"
+                f"    effectID: 00000000000000000000000000000000"
+            )
+        exposed_block = "\n".join(exposed_params)
+        snapshot_values = "\n".join(
+            f"    {track_volume_guids[i]}: 0.0"
+            for i in range(TRACK_COUNT)
+        )
+
         # ── AudioMixerController ──
         f.write(f"""--- !u!241 &{MIXER_ID}
 AudioMixerController:
@@ -105,7 +121,8 @@ AudioMixerController:
   m_SuspendThreshold: -80
   m_EnableSuspend: 1
   m_UpdateMode: 0
-  m_ExposedParameters: []
+  m_ExposedParameters:
+{exposed_block}
   m_AudioMixerGroupViews: []
   m_CurrentViewIndex: 0
   m_TargetSnapshot: {{fileID: {SNAPSHOT_ID}}}
@@ -124,7 +141,7 @@ AudioMixerController:
             name = f"{i:02X}"
             emit_group(
                 f, track_group_ids[i], name, MIXER_ID,
-                guid(), guid(), guid(), track_effect_ids[i],
+                guid(), track_volume_guids[i], guid(), track_effect_ids[i],
             )
             emit_effect(f, track_effect_ids[i])
 
@@ -138,7 +155,8 @@ AudioMixerSnapshotController:
   m_Name: Snapshot
   m_AudioMixer: {{fileID: {MIXER_ID}}}
   m_SnapshotID: {guid()}
-  m_FloatValues: {{}}
+  m_FloatValues:
+{snapshot_values}
   m_TransitionOverrides: {{}}
 """)
 

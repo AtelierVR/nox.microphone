@@ -1,4 +1,5 @@
 using System;
+using UnityEngine;
 using Nox.Audio;
 using Nox.CCK.Events;
 using Nox.CCK.Mods.Cores;
@@ -22,24 +23,24 @@ namespace Nox.CCK.Audio {
 		private readonly IModCoreAPI _coreAPI;
 		private EventSubscription[] _subscriptions = Array.Empty<EventSubscription>();
 
+		/// <summary>Used to hand out a distinct mixer track ("00".."FF") per channel.</summary>
+		private static int _nextTrack;
+
 		/// <summary>
-		/// The voice <see cref="AudioMixer"/> asset (loaded from <c>audio:mixer.mixer</c>).
+		/// The <see cref="AudioMixer"/> asset (loaded from <c>audio:mixer.mixer</c>).
 		/// Exposes 256 tracks named "00".."FF" under the Master group.
 		/// </summary>
 		public AudioMixer Mixer { get; private set; }
 
 		/// <summary>
-		/// The Master <see cref="AudioMixerGroup"/> of the mixer. Assign this to an
-		/// <see cref="AudioSource.outputAudioMixerGroup"/> to route audio through the mixer.
+		/// The <see cref="AudioMixerGroup"/> dedicated to this channel. Assign it to
+		/// <see cref="AudioSource.outputAudioMixerGroup"/> of every AudioSource handled
+		/// by this channel so they route through a dedicated mixer track.
 		/// </summary>
-		public AudioMixerGroup MixerGroup {
-			get {
-				if (Mixer == null)
-					return null;
-				var groups = Mixer.FindMatchingGroups("Master");
-				return groups.Length > 0 ? groups[0] : null;
-			}
-		}
+		public AudioMixerGroup MixerGroup { get; private set; }
+
+		/// <summary>Name of this channel's exposed volume parameter on the mixer.</summary>
+		public string VolumeParam { get; private set; }
 
 		public ChannelRegister(string id, string[] depends, IModCoreAPI coreAPI) {
 			_id      = id;
@@ -54,14 +55,21 @@ namespace Nox.CCK.Audio {
 
             Channel = api.Register(id, depends);
 
-			// Load the voice mixer asset (256 tracks "00".."FF").
+			// Load the mixer asset (256 tracks "00".."FF") and hand this channel a
+			// dedicated track so every AudioSource routed to it mixes independently.
 			Mixer = coreAPI.AssetAPI.GetAsset<AudioMixer>("audio:mixer.mixer");
+			int track = _nextTrack++ & 0xFF;
+			MixerGroup = GetTrack(track);
+			VolumeParam = $"Volume_{track:X2}";
 
 			_subscriptions = new[] {
 				coreAPI.EventAPI.Subscribe("audio.channel.remove_requested", OnRemoveRequested),
 				coreAPI.EventAPI.Subscribe("audio.channel.volume_changed", OnVolumeChanged),
 				coreAPI.EventAPI.Subscribe("audio.channel.mute_changed", OnMuteChanged)
 			};
+
+			// Apply the initial channel volume/mute to the mixer track.
+			SetVolume(Channel.IsEffectivelyMuted ? 0f : Channel.EffectiveVolume);
 		}
 
 		/// <summary>
@@ -72,6 +80,18 @@ namespace Nox.CCK.Audio {
 			if (Mixer == null || index < 0 || index > 255)
 				return null;
 			return Mixer.FindMatchingGroups($"{index:X2}")[0];
+		}
+
+		/// <summary>
+		/// Set this channel's mixer-track volume. <paramref name="linear"/> is a
+		/// [0..1] linear amplitude; 0 mute. Does nothing if no mixer/param available.
+		/// </summary>
+		public void SetVolume(float linear) {
+			if (Mixer == null || string.IsNullOrEmpty(VolumeParam))
+				return;
+
+			float decibels = linear > 0f ? 20f * Mathf.Log10(linear) : -80f;
+			Mixer.SetFloat(VolumeParam, Mathf.Clamp(decibels, -80f, 0f));
 		}
 
 
@@ -96,12 +116,14 @@ namespace Nox.CCK.Audio {
 			if (!context.TryGet(0, out IChannelAudio c) || c.Id != _id)
 				return;
 			OnMute.Invoke(Channel.IsMuted, Channel.IsEffectivelyMuted);
+			SetVolume(Channel.IsEffectivelyMuted ? 0f : Channel.EffectiveVolume);
         }
 
         private void OnVolumeChanged(EventData context) {
 			if (!context.TryGet(0, out IChannelAudio c) || c.Id != _id)
 				return;
 			OnVolume.Invoke(Channel.Volume, Channel.EffectiveVolume);
+			SetVolume(Channel.EffectiveVolume);
         }
 
 		public void Dispose() {
